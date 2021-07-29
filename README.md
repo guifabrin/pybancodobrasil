@@ -14,9 +14,9 @@ Disponível via pip
 ## Aquisitando dados
 Você ainda precisa ter o Warsaw instalado visto que este é um web crawler
 ```python
-from pybancodobrasil import get
+import pybancodobrasil
 
-print(get(agencia, conta, senha))
+print(pybancodobrasil.get(agencia, conta, senha))
 ```
 
 ## Contribuindo

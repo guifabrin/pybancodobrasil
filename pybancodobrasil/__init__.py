@@ -1,3 +1,5 @@
+"""This module do web crawler of banco do brasil."""
+__version__ = "0.0.3"
 import time
 from datetime import datetime
 
@@ -15,7 +17,7 @@ from selenium import webdriver
 
 now = datetime.now()
 
-with open(os.path.dirname(__file__) + '/banco_do_brasil.js') as js_file:
+with open(os.path.dirname(__file__) + '/script.js') as js_file:
     minified = jsmin(js_file.read())
 
 timeout = 1000
