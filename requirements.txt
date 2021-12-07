@@ -2,4 +2,4 @@ setuptools==58.5.3
 requests==2.26.0
 wget==3.2
 jsmin==3.0.0
-selenium==4.0.0
+selenium==4.1.0
