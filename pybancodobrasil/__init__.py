@@ -1,14 +1,12 @@
 """This module do web crawler of banco do brasil."""
-__version__ = "0.1.0"
+__version__ = "0.1.6"
 
 import socket
 import time
 from datetime import datetime
 from random import randrange
 from jsmin import jsmin
-from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.common.by import By
-from selenium.webdriver.firefox.firefox_binary import FirefoxBinary
 from selenium.webdriver.support import expected_conditions
 from selenium.webdriver.support.wait import WebDriverWait
 from selenium import webdriver
@@ -19,6 +17,30 @@ now = datetime.now()
 
 minified = jsmin("""
 window.pybancodobrasil = {
+    clearStr: (str) => {
+        return str.replace(/(\\r\\n|\\n|\\r|\\t)/gm, "").trim()
+    },
+    table2Json: (table) => {
+        var data = [];
+        for (var i = 0; i < table.rows.length; i++) {
+            var tableRow = table.rows[i];
+            var columns = tableRow.querySelectorAll('td')
+            var _columns = []
+            for (var column of columns){
+                if (column.childElementCount==0){
+                    _columns.push([window.pybancodobrasil.clearStr(column.innerText)])
+                } else {
+                    __column = []
+                    for (var child of column.children){
+                        __column.push(window.pybancodobrasil.clearStr(child.innerText))
+                    }
+                    _columns.push(__column)
+                }
+            }
+            data.push(_columns)
+        }
+        return data;
+    },
     extratos: {
         counter: 0,
         results: [],
@@ -36,7 +58,7 @@ window.pybancodobrasil = {
                             if (data) {
                                 const table = $(data).find('table#tabelaExtrato')[0]
                                 if (table)
-                                    window.pybancodobrasil.extratos.results = [...window.pybancodobrasil.extratos.results, ...window.pybancodobrasil.extratos.methods.table2Json(table)];
+                                    window.pybancodobrasil.extratos.results = [...window.pybancodobrasil.extratos.results, ...window.pybancodobrasil.table2Json(table)];
                             }
                         } catch (error) {
                         }
@@ -57,23 +79,11 @@ window.pybancodobrasil = {
                     type: "post",
                     url: "/aapf/extrato/009-00-N.jsp"
                 })
-            },
-            table2Json: (table) => {
-                var data = [];
-                for (var i = 1; i < table.rows.length; i++) {
-                    var tableRow = table.rows[i];
-                    var rowData = [];
-                    for (var j = 0; j < tableRow.cells.length; j++) {
-                        rowData.push(tableRow.cells[j].innerText);;
-                    }
-                    data.push(rowData);
-                }
-                return data;
             }
         }
     },
     faturas: {
-        cartoes: [],
+        cartoes: {},
         done: false,
         methods: {
             goto: () => {
@@ -86,12 +96,11 @@ window.pybancodobrasil = {
                 return document.querySelectorAll('[indicetabs]').length;
             },
             buscaFaturas: (indice) => {
-                var url = "/aapf/cartao/v119-01e2.jsp?indice=" + indice;
+                var url = "/aapf/cartao/v119-01e2.jsp?indice=" + indice + "&pagina=json";
                 var req = configura();
                 req.open("GET", url, true);
                 req.onreadystatechange = function () {
                     if (req.readyState == 4) {
-                        console.log(req.responseText)
                         let len = $(req.responseText).find('li').size();
                         window.pybancodobrasil.faturas.methods.buscaExtrato(indice, 0, len, () => {
                             if ((indice + 1) < window.pybancodobrasil.faturas.methods.cartoes()) {
@@ -105,7 +114,7 @@ window.pybancodobrasil = {
                 };
                 req.send(null);
             },
-            buscaExtrato: (cartao, ind, len, fnEnd) => {
+            buscaExtrato: (_, ind, len, fnEnd) => {
                 var indice = ind;
                 try {
                     var url = "/aapf/cartao/v119-01e3.jsp?indice=" + indice + "&pagina=normal";
@@ -113,12 +122,26 @@ window.pybancodobrasil = {
                     req.open("GET", url, true);
                     req.onreadystatechange = function () {
                         if (req.readyState == 4) {
-                            if (!window.pybancodobrasil.faturas.cartoes[cartao]){
-                                window.pybancodobrasil.faturas.cartoes[cartao] = []
+                            var cardInfo = $(req.responseText).find('.textoIdCartao').toArray().map(el => el.innerHTML)
+                            var cardNumber = cardInfo[1]
+                            if (cardNumber) {
+                                if (!window.pybancodobrasil.faturas.cartoes[cardNumber]) {
+                                    window.pybancodobrasil.faturas.cartoes[cardNumber] = {}
+                                }
+                                var vencimento = 'next'
+                                try {
+                                    vencimento = [...$(req.responseText).find('.vencimentoFatura')[0].childNodes].filter(item => item.nodeName == '#text').map(item => item.textContent).join(' ').trim()
+                                } catch (e) { }
+                                if (!window.pybancodobrasil.faturas.cartoes[cardNumber][vencimento]) {
+                                    window.pybancodobrasil.faturas.cartoes[cardNumber][vencimento] = []
+                                }
+                                var tables = $(req.responseText).find('table table table').toArray()
+                                for (table of tables) {
+                                    window.pybancodobrasil.faturas.cartoes[cardNumber][vencimento].push(window.pybancodobrasil.table2Json(table))
+                                }
                             }
-                            window.pybancodobrasil.faturas.cartoes[cartao].push(req.responseText)
                             if ((ind + 1) < len) {
-                                window.pybancodobrasil.faturas.methods.buscaExtrato(cartao, ind + 1, len, fnEnd);
+                                window.pybancodobrasil.faturas.methods.buscaExtrato(cardNumber, ind + 1, len, fnEnd);
                             } else {
                                 fnEnd();
                             }
@@ -127,18 +150,6 @@ window.pybancodobrasil = {
                     req.send(null);
                 } catch (e) {
                 }
-            },
-            table2Json: (table) => {
-                var data = [];
-                for (var i = 1; i < table.rows.length; i++) {
-                    var tableRow = table.rows[i];
-                    var rowData = [];
-                    for (var j = 0; j < tableRow.cells.length; j++) {
-                        rowData.push(tableRow.cells[j].innerText);;
-                    }
-                    data.push(rowData);
-                }
-                return data;
             },
             last: {
 
