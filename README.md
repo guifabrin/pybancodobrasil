@@ -16,7 +16,7 @@ Você ainda precisa ter o Warsaw instalado visto que este é um web crawler
 ```python
 import pybancodobrasil
 
-print(pybancodobrasil.get(agencia, conta, senha, fromyear=1993, headless=True))
+print(pybancodobrasil.get(agencia, conta, senha, init_year=1993, headless=True, default_timeout = 10))
 ```
 
 ## Contribuindo

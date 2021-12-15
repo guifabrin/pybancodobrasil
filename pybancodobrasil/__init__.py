@@ -1,5 +1,5 @@
 """This module do web crawler of banco do brasil."""
-__version__ = "0.0.4"
+__version__ = "0.1.0"
 
 import socket
 import time
@@ -8,10 +8,12 @@ from random import randrange
 from jsmin import jsmin
 from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.common.by import By
+from selenium.webdriver.firefox.firefox_binary import FirefoxBinary
 from selenium.webdriver.support import expected_conditions
 from selenium.webdriver.support.wait import WebDriverWait
 from selenium import webdriver
 from webdriver_manager.chrome import ChromeDriverManager
+from webdriver_manager.firefox import GeckoDriverManager
 
 now = datetime.now()
 
@@ -66,33 +68,8 @@ window.pybancodobrasil = {
                     }
                     data.push(rowData);
                 }
-                for (let index in data) {
-                    if (data[index].length < 4) {
-                        delete data[index];
-                    } else {
-                        if (!data[index][4]) {
-                            delete data[index]
-                        }
-                    }
-                }
-                return window.pybancodobrasil.extratos.methods.parse(data.filter(item => item));
-            },
-            parse(array) {
-                const parsed = [];
-                for (let [data, a, descricao, b, valor] of array) {
-                    const [strvalor, cd] = valor.split(' ');
-                    value = parseFloat(strvalor.replace('.', '').replace(',', '.')) * (cd == 'C' ? 1 : -1)
-                    const [dd, mm, yyyy] = data.split('/');
-                    if (descricao != 'Saldo Anterior') {
-                        parsed.push({
-                            date: new Date(`${yyyy}-${mm}-${dd}`),
-                            value,
-                            description: descricao
-                        })
-                    }
-                }
-                return parsed;
-            },
+                return data;
+            }
         }
     },
     faturas: {
@@ -114,6 +91,7 @@ window.pybancodobrasil = {
                 req.open("GET", url, true);
                 req.onreadystatechange = function () {
                     if (req.readyState == 4) {
+                        console.log(req.responseText)
                         let len = $(req.responseText).find('li').size();
                         window.pybancodobrasil.faturas.methods.buscaExtrato(indice, 0, len, () => {
                             if ((indice + 1) < window.pybancodobrasil.faturas.methods.cartoes()) {
@@ -135,13 +113,10 @@ window.pybancodobrasil = {
                     req.open("GET", url, true);
                     req.onreadystatechange = function () {
                         if (req.readyState == 4) {
-                            const result = window.pybancodobrasil.faturas.methods.parse(req.responseText)
-                            if (result && result.values.length) {
-                                if (!window.pybancodobrasil.faturas.cartoes[cartao]) {
-                                    window.pybancodobrasil.faturas.cartoes[cartao] = []
-                                }
-                                window.pybancodobrasil.faturas.cartoes[cartao].push(result)
+                            if (!window.pybancodobrasil.faturas.cartoes[cartao]){
+                                window.pybancodobrasil.faturas.cartoes[cartao] = []
                             }
+                            window.pybancodobrasil.faturas.cartoes[cartao].push(req.responseText)
                             if ((ind + 1) < len) {
                                 window.pybancodobrasil.faturas.methods.buscaExtrato(cartao, ind + 1, len, fnEnd);
                             } else {
@@ -163,104 +138,33 @@ window.pybancodobrasil = {
                     }
                     data.push(rowData);
                 }
-                for (let index in data) {
-                    if (data[index].length < 4) {
-                        delete data[index];
-                    } else {
-                        if (!data[index][3] || data[index][0] == "R$ ") {
-                            delete data[index]
-                        }
-                    }
-                }
-                return window.pybancodobrasil.faturas.methods.parseValues(data);
-            },
-            parseValues(array) {
-                const values = [];
-                for (let data of array) {
-                    try {
-                        const [dd, mm] = data[0].split('/');
-                        const description = data[1]
-                        const tvalue = data.length == 5 ? data[4]: data[3]
-                        const value = parseFloat(tvalue.replace('.', '').replace(',', '.')) * -1;
-                        const date = new Date(`2021-${(parseInt(mm) + '').padStart(2, '0')}-${dd}`)
-                        if (!value || isNaN(date.getTime())) {
-                            continue;
-                        }
-                        values.push({
-                            date,
-                            description,
-                            value,
-                        })
-                    } catch (e) { }
-                }
-                return values;
+                return data;
             },
             last: {
 
-            },
-            parse: (data) => {
-                const $el = $(data).find('.textoIdCartao')[1]
-                if (!$el) {
-                    return;
-                }
-                const cardNumber = $(data).find('.textoIdCartao')[1].innerText;
-                const tables = $(data).find('table').toArray()
-                let values = [];
-                for (const table of tables) {
-                    const nvalues = window.pybancodobrasil.faturas.methods.table2Json(table);
-                    if (nvalues && nvalues.length)
-                        values = [...values, ...nvalues];
-                }
-                let dd = 01;
-                let mm = 01;
-                let yyyy = 2021;
-                $elVencimento = $(data).find('.vencimentoFatura')[0]
-                if ($elVencimento){
-                    $($elVencimento).children('span').remove();
-                    const [ddd, mmd, yyyyd] = $elVencimento.innerText.trim().split('/');
-                    dd = ddd;
-                    mm =  mmd;
-                    yyyy = yyyyd;
-                    window.pybancodobrasil.faturas.methods.last.dd = dd;
-                    window.pybancodobrasil.faturas.methods.last.mm = mm;
-                    window.pybancodobrasil.faturas.methods.last.yyyy = yyyy;
-                } else {
-                    if (window.pybancodobrasil.faturas.methods.last.dd) {
-                        dd = window.pybancodobrasil.faturas.methods.last.dd;
-                        mm = parseInt(window.pybancodobrasil.faturas.methods.last.mm)+1;
-                        yyyy = window.pybancodobrasil.faturas.methods.last.yyyy;
-                        if (mm == 13){
-                            mm = 1;
-                            yyyy++;
-                        }
-                    }
-                }
-                return {
-                    values,
-                    cardNumber,
-                    date: new Date(`${yyyy}-${(mm+'').padStart(2, '0')}-${dd}`)
-                }
             }
         }
     }
 }
 """)
 
-default_timeout = 10
+_default_timeout = 10
 
 
 def __login(driver, agencia, conta, senha):
+    global _default_timeout
     driver.get("https://www2.bancobrasil.com.br/aapf/login.html?1624286762470#/acesso-aapf-agencia-conta-1")
-    WebDriverWait(driver, default_timeout).until(
+    time.sleep(1)
+    WebDriverWait(driver, _default_timeout).until(
         expected_conditions.visibility_of_element_located((By.ID, "dependenciaOrigem")))
     driver.find_element(By.ID, "dependenciaOrigem").send_keys(agencia)
     time.sleep(1)
-    WebDriverWait(driver, default_timeout).until(
+    WebDriverWait(driver, _default_timeout).until(
         expected_conditions.visibility_of_element_located((By.ID, "numeroContratoOrigem")))
     driver.find_element(By.ID, "numeroContratoOrigem").send_keys(conta)
     time.sleep(1)
     driver.find_element(By.ID, "botaoEnviar").click()
-    WebDriverWait(driver, default_timeout).until(
+    WebDriverWait(driver, _default_timeout).until(
         expected_conditions.visibility_of_element_located((By.ID, "senhaConta")))
     driver.find_element(By.ID, "senhaConta").send_keys(senha)
     try:
@@ -268,11 +172,12 @@ def __login(driver, agencia, conta, senha):
     except Exception as err_button_sent:
         print('Possible not an error - button sent', __login.__name__, err_button_sent)
     time.sleep(3)
-    WebDriverWait(driver, default_timeout).until(
+    WebDriverWait(driver, _default_timeout).until(
         expected_conditions.visibility_of_element_located((By.CSS_SELECTOR, ".menu-completo > .menu-itens")))
 
 
 def __extratos(driver, init_year=1993):
+    global _default_timeout
     try:
         time.sleep(1)
         driver.execute_script(minified)
@@ -296,6 +201,7 @@ def __extratos(driver, init_year=1993):
 
 
 def __faturas(driver):
+    global _default_timeout
     try:
         driver.execute_script(minified)
         driver.execute_script("window.pybancodobrasil.faturas.methods.goto()")
@@ -312,16 +218,17 @@ def __faturas(driver):
 
 
 def __cdb(driver):
+    global _default_timeout
     driver.execute_script(minified)
     try:
         driver.execute_script("document.querySelector(\'[codigo=\"33130\"]\').click()")
-        WebDriverWait(driver, default_timeout).until(
+        WebDriverWait(driver, _default_timeout).until(
             expected_conditions.visibility_of_element_located((By.CSS_SELECTOR, "#botaoContinua")))
         driver.find_element(By.ID, "botaoContinua").click()
-        WebDriverWait(driver, default_timeout).until(
+        WebDriverWait(driver, _default_timeout).until(
             expected_conditions.visibility_of_element_located((By.CSS_SELECTOR, "#botaoContinua2")))
         driver.find_element(By.ID, "botaoContinua2").click()
-        WebDriverWait(driver, default_timeout).until(
+        WebDriverWait(driver, _default_timeout).until(
             expected_conditions.visibility_of_element_located(
                 (By.CSS_SELECTOR, ".transacao-corpo  table:nth-child(6)")))
         lines = driver.find_element(By.CSS_SELECTOR,
@@ -351,36 +258,46 @@ def get_free_port():
     return port
 
 
-def get_driver(headless=True):
-    try:
-        options = webdriver.ChromeOptions()
-        if headless:
-            options.add_argument('--headless')
-            options.add_argument('--disable-gpu')  # Last I checked this was necessary.
-        driver = webdriver.Chrome(ChromeDriverManager().install(), options=options, port=get_free_port())
+def get_driver(headless=True, driver='chrome'):
+    if driver == 'firefox':
+        options = webdriver.FirefoxOptions()
+        options.headless = headless
+        driver = webdriver.Firefox(executable_path=GeckoDriverManager().install(), options=options)
         driver.implicitly_wait(10)
         return driver
-    except WebDriverException:
-        return get_driver(headless)
+    options = webdriver.ChromeOptions()
+    if headless:
+        options.add_argument('--headless')
+        options.add_argument('--disable-gpu')  # Last I checked this was necessary.
+    driver = webdriver.Chrome(executable_path=ChromeDriverManager().install(), options=options,
+                              port=get_free_port())
+    driver.implicitly_wait(10)
+    return driver
 
 
-def get(agencia, conta, senha, fromyear=1993, headless=True):
-    driver = get_driver(headless)
+def get(agencia, conta, senha, init_year=1993, headless=True, default_timeout=10, driver='chrome'):
+    global _default_timeout
+    _default_timeout = default_timeout
+    driver = get_driver(headless, driver)
     try:
         __login(driver, agencia, conta, senha)
-    except:
+    except Exception as ex:
+        print('Error login', ex)
         return None
     try:
-        transactions = __extratos(driver, fromyear)
-    except:
+        transactions = __extratos(driver, init_year)
+    except Exception as ex:
+        print('Error transactions', ex)
         transactions = []
     try:
         cards = __faturas(driver)
-    except:
+    except Exception as ex:
+        print('Error cards', ex)
         cards = []
     try:
         cdb = __cdb(driver)
-    except:
+    except Exception as ex:
+        print('Error cdb', ex)
         cdb = None
     retorno = {
         'transactions': transactions,

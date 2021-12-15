@@ -111,3 +111,4 @@ ENV/
 ./*.json
 
 chromedriver.exe
+test.py
