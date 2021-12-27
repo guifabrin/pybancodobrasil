@@ -1,5 +1,5 @@
 """This module do web crawler of banco do brasil."""
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 import socket
 import time
@@ -94,7 +94,7 @@ def _parse_transaction(array):
 
 
 class Transaction:
-    def _init__(self):
+    def __init__(self):
         self.description = None
         self.document_id = None
         self.timestamp = None
@@ -106,6 +106,7 @@ class Transaction:
         self.city = None
         self.card = None
         self.validity = None
+        self.validity_can_be_wrong = False
 
 
 class BrazilBank:
@@ -158,15 +159,15 @@ class BrazilBank:
         self._check()
         if self._location != 'transactions':
             self._location = 'transactions'
+            self.driver.execute_script("document.querySelector('[codigo=\"32456\"]').click()")
             time.sleep(10)
-        self.driver.execute_script("document.querySelector('[codigo=\"32456\"]').click()")
         url = "/aapf/extrato/009-00-N.jsp"
         period = "00{}{}".format(str(month).zfill(2), year)
         script = '$.ajaxApf({atualizaContadorSessao:!0,cache:!1,funcaoSucesso:()=>null,funcaoErro:()=>null,' \
-                 'parametros:{ambienteLayout:"internoTransacao",confirma:"sim",periodo:"{}",tipoConta:"",' \
-                 'novoLayout:"sim"},simbolo:"30151696898430647187469639762490",tiporetorno:"html",type:"post",' \
-                 'url:"{}"}); '
-        self.driver.execute_script(script.format(period, url))
+                 'parametros:{ambienteLayout:"internoTransacao",confirma:"sim",periodo:"' + period + '",tipoConta:"",' \
+                                                                                                     'novoLayout:"sim"},simbolo:"30151696898430647187469639762490",tiporetorno:"html",type:"post",' \
+                                                                                                     'url:"' + url + '"}); '
+        self.driver.execute_script(script)
         already_checked = []
         while True:
             requests = self.driver.requests
@@ -208,59 +209,88 @@ class BrazilBank:
             time.sleep(10)
         total_child = self.driver.execute_script("return document.querySelector('#carousel-cartoes').childElementCount")
 
-        def _get_xhr_response(driver, url, check_url=None):
+        def _get_xhr_response(driver, url, check_urls=None, already_checked=[]):
             script_xhr_request = 'var url="{}",req=configura();req.open("GET",url,!0),req.send(null);'
             driver.execute_script(script_xhr_request.format(url))
-            check_url = check_url if check_url else url
+            if not check_urls:
+                check_urls = [url]
             while True:
-                cards_requests = list(filter(lambda r: check_url in r.url and r.response, driver.requests))
-                if len(cards_requests):
-                    for request in cards_requests:
-                        return BeautifulSoup(_decode(request.response.body))
+                for check_url in check_urls:
+                    cards_requests = list(filter(lambda r: check_url in r.url and r.response, driver.requests))
+                    if len(cards_requests):
+                        for request in cards_requests:
+                            if request.id not in already_checked:
+                                already_checked.append(request.id)
+                                return BeautifulSoup(_decode(request.response.body))
 
         transactions = []
+        already_checked = []
         for index in range(0, total_child):
             card_parsed_html = _get_xhr_response(self.driver,
-                                                 "/aapf/cartao/v119-01e2.jsp?indice={}&pagina=json".format(index))
+                                                 "/aapf/cartao/v119-01e2.jsp?indice={}&pagina=json".format(index),
+                                                 already_checked=already_checked)
             invoice_index = 0
+            validities_pt_br = []
             while card_parsed_html.find('li', {'indicetabs': invoice_index}):
+                last = not card_parsed_html.find('li', {'indicetabs': invoice_index + 1})
                 invoice_parsed_html = _get_xhr_response(self.driver,
                                                         "/aapf/cartao/v119-01e3.jsp?indice={}&pagina=normal".format(
-                                                            invoice_index), '/aapf/cartao/v119-03r1.jsp')
-                card_text = invoice_parsed_html.find_all('span', attrs={'class': 'textoIdCartao'})
-                if len(card_text) > 1:
-                    card_number = card_text[1].text
-                    validity_pt_br = invoice_parsed_html.find('div', attrs={'class': 'vencimentoFatura'}).text.replace(
-                        'Vencimento', '').strip()
-                    lines = invoice_parsed_html.find_all('tr')
-                    for line in lines:
-                        columns = list(map(lambda td: td.text.strip(), line.find_all('td')))
-                        if len(columns) == 4 and '/' in columns[0]:
-                            dd, mm, yy = validity_pt_br.split('/')
-                            date = '{}/{}'.format(columns[0], yy)
-                            _title = ''.join(columns[1])
-                            if 'PARC' in _title:
-                                title = _title[0:13].strip()
-                                parc = _title[19:24].strip()
-                                city = _title[25:].strip()
-                            elif 'PGTO' in _title:
-                                title = _title
-                                parc = '01/01'
-                                city = ''
+                                                            invoice_index),
+                                                        ['/aapf/cartao/v119-03r1.jsp', '/aapf/cartao/v119-03r2.jsp', '/aapf/cartao/v119-01erro.jsp'],
+                                                        already_checked=already_checked)
+                if 'Não foi possível concluir a operação. Tente mais tarde.' not in invoice_parsed_html.text:
+                    card_text = invoice_parsed_html.find_all('span', attrs={'class': 'textoIdCartao'})
+                    if len(card_text) > 1:
+                        card_number = card_text[1].text
+                        if last:
+                            total_validities = len(validities_pt_br)
+                            if total_validities:
+                                dd, mm, yyyy = validities_pt_br[total_validities - 1].split('/')
+                                mm = int(mm)
+                                yyyy = int(yyyy)
+                                if mm == 12:
+                                    mm = 1
+                                    yyyy += 1
+                                else:
+                                    mm += 1
+                                validity_pt_br = '{}/{}/{}'.format(dd, mm, yyyy)
                             else:
-                                title = _title[0:23].strip()
-                                parc = '01/01'
-                                city = _title[23:].strip()
-                            transaction = Transaction()
-                            transaction.title = title
-                            transaction.parc = parc
-                            transaction.city = city
-                            transaction.card = card_number
-                            transaction.timestamp = _parse_pt_br_date(date)
-                            transaction.validity = _parse_pt_br_date(validity_pt_br)
-                            transaction.value = _parse_pt_br_value(columns[3]) * -1
-                            if callback:
-                                callback(transaction)
-                            transactions.append(transaction)
+                                validity_pt_br = '01/01/1993'
+                        else:
+                            validity_pt_br = invoice_parsed_html.find('div',
+                                                                      attrs={'class': 'vencimentoFatura'}).text.replace(
+                                'Vencimento', '').strip()
+                        validities_pt_br.append(validity_pt_br)
+                        lines = invoice_parsed_html.find_all('tr')
+                        for line in lines:
+                            columns = list(map(lambda td: td.text.strip(), line.find_all('td')))
+                            if len(columns) == 4 and '/' in columns[0]:
+                                dd, mm, yy = validity_pt_br.split('/')
+                                date = '{}/{}'.format(columns[0], yy)
+                                _title = ''.join(columns[1])
+                                if 'PARC' in _title:
+                                    title = _title[0:13].strip()
+                                    parc = _title[19:24].strip()
+                                    city = _title[25:].strip()
+                                elif 'PGTO' in _title:
+                                    title = _title
+                                    parc = '01/01'
+                                    city = ''
+                                else:
+                                    title = _title[0:23].strip()
+                                    parc = '01/01'
+                                    city = _title[23:].strip()
+                                transaction = Transaction()
+                                transaction.title = title
+                                transaction.parc = parc
+                                transaction.city = city
+                                transaction.card = card_number
+                                transaction.timestamp = _parse_pt_br_date(date)
+                                transaction.validity = _parse_pt_br_date(validity_pt_br)
+                                transaction.value = _parse_pt_br_value(columns[3]) * -1
+                                transaction.validity_can_be_wrong = last
+                                if callback:
+                                    callback(transaction)
+                                transactions.append(transaction)
                 invoice_index += 1
         return transactions
